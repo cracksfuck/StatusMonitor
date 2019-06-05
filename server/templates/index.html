@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>监控</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="/static/css/custom.css?v=[[ cur_version ]]" rel="stylesheet">
+    <link href="/static/element-ui/theme-chalk/index.css" rel="stylesheet">
+    <link href="/static/element-ui/theme-chalk/display.css" rel="stylesheet">
+</head>
+<body>
+
+<el-container id="app" v-cloak>
+    <el-main>
+        <el-row type="flex" justify="center">
+            <el-col :md="24" :lg="20" :xl="18">
+                <el-card>
+                    <el-table ref="table" :data="statuses"
+                              :row-key="rowKey" @row-click="rowClick"
+                              :row-class-name="rowClassName">
+                        <!-- 折叠内容 -->
+                        <el-table-column type="expand" width="20">
+                            <template slot-scope="scope">
+                                <div style="text-align: center;">
+                                    <div>内存：{{ sizeFormat(scope.row.memory.used) }} / {{ sizeFormat(scope.row.memory.total) }}</div>
+                                    <div>交换分区：{{ sizeFormat(scope.row.swap.used) }} / {{ sizeFormat(scope.row.swap.total) }}</div>
+                                    <div>硬盘：{{ sizeFormat(scope.row.disk.used) }} / {{ sizeFormat(scope.row.disk.total) }}</div>
+                                    <div>TCP/UDP：{{ scope.row.net.tcp.count }} / {{ scope.row.net.udp.count }}</div>
+                                </div>
+                            </template>
+                        </el-table-column>
+                        <!-- 名称 -->
+                        <el-table-column label="名称" prop="name" min-width="100" align="center" :sortable="sortable" sort-by="name"></el-table-column>
+                        <!-- 位置 -->
+                        <el-table-column label="位置" prop="location" min-width="100" align="center" :sortable="sortable" sort-by="location"></el-table-column>
+                        <!-- 已运行 -->
+                        <el-table-column label="已运行" width="100" align="center" :sortable="sortable">
+                            <template slot-scope="scope">
+                                <div>{{ formatSecond(scope.row.uptime) }}</div>
+                            </template>
+                        </el-table-column>
+                        <!-- 负载 -->
+                        <el-table-column label="负载" width="130" align="center" :sortable="sortable"
+                                         :sort-method="(a, b) => (a.load_1 + a.load_5 + a.load_15) / 3 - (b.load_1 + b.load_5 + b.load_15) / 3">
+                            <template slot-scope="scope">
+                                <div>{{ scope.row.load_1.toFixed(2) }} | {{ scope.row.load_5.toFixed(2) }} | {{ scope.row.load_15.toFixed(2) }}</div>
+                            </template>
+                        </el-table-column>
+                        <!-- 网络 -->
+                        <el-table-column label="网络↑|↓" min-width="115" align="center" :sortable="sortable"
+                                         :sort-method="(a, b) => (a.net.io.up + a.net.io.down) - (b.net.io.up + b.net.io.down)">
+                            <template slot-scope="scope">
+                                <div>{{ sizeFormat(scope.row.net.io.up) }} | {{ sizeFormat(scope.row.net.io.down) }}</div>
+                            </template>
+                        </el-table-column>
+                        <!-- 流量 -->
+                        <el-table-column label="流量↑|↓" min-width="140" align="center" :sortable="sortable"
+                                         :sort-method="(a, b) => (a.net.traffic.sent + a.net.traffic.recv) - (b.net.traffic.sent + b.net.traffic.recv)">
+                            <template slot-scope="scope">
+                                <div>{{ sizeFormat(scope.row.net.traffic.sent) }} | {{ sizeFormat(scope.row.net.traffic.recv) }}</div>
+                            </template>
+                        </el-table-column>
+                        <!-- CPU -->
+                        <el-table-column label="CPU" align="center" :sortable="sortable" sort-by="cpu.percent">
+                            <template slot-scope="scope">
+                                <el-progress :text-inside="true"
+                                             :stroke-width="18" :percentage="scope.row.cpu.percent"
+                                             :color="statusColor(scope.row.cpu.percent, 80, 90)"></el-progress>
+                            </template>
+                        </el-table-column>
+                        <!-- 内存 -->
+                        <el-table-column label="内存" align="center" :sortable="sortable" sort-by="memory.percent">
+                            <template slot-scope="scope">
+                                <el-progress :text-inside="true"
+                                             :stroke-width="18" :percentage="scope.row.memory.percent"
+                                             :color="statusColor(scope.row.memory.percent, 80, 90)"></el-progress>
+                            </template>
+                        </el-table-column>
+                        <!-- 硬盘 -->
+                        <el-table-column label="硬盘" align="center" :sortable="sortable" sort-by="disk.percent">
+                            <template slot-scope="scope">
+                                <el-progress :text-inside="true"
+                                             :stroke-width="18" :percentage="scope.row.disk.percent"
+                                             :color="statusColor(scope.row.disk.percent, 80, 90)"></el-progress>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-card>
+            </el-col>
+        </el-row>
+    </el-main>
+</el-container>
+
+<script src="/static/vue/vue.min.js"></script>
+<script src="/static/element-ui/index.js"></script>
+<script src="/static/qs/qs.min.js"></script>
+<script src="/static/axios/axios.min.js?v=[[ cur_version ]]"></script>
+<script src="/static/js/application.js?v=[[ cur_version ]]"></script>
+<script src="/static/js/vue-init.js?v=[[ cur_version ]]"></script>
+<script src="/static/js/axios-init.js?v=[[ cur_version ]]"></script>
+<script>
+
+    const basePath = '[[ base_path ]]';
+    axios.defaults.baseURL = basePath;
+
+    const app = new Vue({
+        'el': '#app',
+        data: {
+            sortable: false,
+            statuses: []
+        },
+        methods: {
+            /**
+             * 返回每行的唯一Key
+             */
+            rowKey: function(status) {
+                return status.id;
+            },
+            /**
+             * 点击表格某一行触发
+             */
+            rowClick: function(row) {
+                this.$refs.table.toggleRowExpansion(row);
+            },
+            /**
+             * 返回表格行的class
+             */
+            rowClassName: function({row, rowIndex}) {
+                if (rowIndex % 2 === 0) {
+                    return 'gray';
+                } else {
+                    return 'black';
+                }
+            },
+            /**
+             * 状态的颜色
+             */
+            statusColor: function(a, b, c) {
+                if (a < b) {
+                    return '#67C23A';
+                } else if (a < c) {
+                    return '#E6A23C';
+                } else {
+                    return '#F56C6C';
+                }
+            },
+            /**
+             * 状态的名称
+             */
+            statusName: function(a, b, c) {
+                if (a < b) {
+                    return 'success';
+                } else if (a < c) {
+                    return 'warning';
+                } else {
+                    return 'danger';
+                }
+            },
+            formatSecond: function(second) {
+                if (second < 60) {
+                    return second.toFixed(0) + ' 秒';
+                } else if (second < 3600) {
+                    return (second / 60).toFixed(0) + ' 分钟'
+                } else if (second < 3600 * 24) {
+                    return (second / 3600).toFixed(0) + ' 小时'
+                } else {
+                    return (second / 3600 / 24).toFixed(0) + ' 天'
+                }
+            },
+            getStatuses: function () {
+                post({
+                    url: '/statuses',
+                    success: data => {
+                        this.setStatuses(data);
+                        setTimeout(this.getStatuses, 1500);
+                    },
+                    error: e => {
+                        this.$message.error('获取出错');
+                        setTimeout(this.getStatuses, 1500);
+                    }
+                });
+            },
+            setStatuses: function (statuses) {
+                for (let i = 0; i < statuses.length; ++i) {
+                    let status = statuses[i];
+                    status.cpu.percent = status.cpu.percent.toFixed(2);
+                    status.memory.percent = (status.memory.used / status.memory.total * 100).toFixed(2);
+                    status.disk.percent = (status.disk.used / status.disk.total * 100).toFixed(2);
+                }
+                this.statuses = statuses;
+            }
+        },
+        mounted: function () {
+            this.getStatuses();
+        }
+    });
+
+</script>
+</body>
+</html>
