@@ -15,7 +15,7 @@ from tornado.httpserver import HTTPServer
 from tornado.ioloop import IOLoop
 from tornado.wsgi import WSGIContainer
 
-from server import config
+import config
 
 port = config.get_port()
 secret = config.get_secret()

@@ -9,7 +9,7 @@ from threading import Timer
 import psutil
 import requests
 
-from client import config
+import config
 
 server_addr = config.get_server_addr()
 secret = config.get_secret()
